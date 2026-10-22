@@ -1,0 +1,90 @@
+#!/usr/bin/python3
+# Google日本語入力のシークレットモード(学習停止)を切り替える。
+# 使い方: gime-incognito [on|off|toggle|status]  (省略時 toggle)
+import os, subprocess, sys
+
+CONFIG = os.path.expanduser("~/Library/Application Support/Google/JapaneseInput/config1.db")
+FIELD = 20  # mozc.config.Config.incognito_mode
+JOB = f"gui/{os.getuid()}/com.google.inputmethod.Japanese.Converter"
+
+
+def varint(b, i):
+    r = s = 0
+    while True:
+        c = b[i]; i += 1
+        r |= (c & 0x7F) << s; s += 7
+        if c < 0x80:
+            return r, i
+
+
+def enc(n):
+    out = b""
+    while n >= 0x80:
+        out += bytes([n & 0x7F | 0x80]); n >>= 7
+    return out + bytes([n])
+
+
+def parse(b):
+    """トップレベルのフィールドを (番号, 型, 生バイト列) のリストに分解する。"""
+    out, i = [], 0
+    while i < len(b):
+        start = i
+        key, i = varint(b, i)
+        wt = key & 7
+        if wt == 0:
+            _, i = varint(b, i)
+        elif wt == 2:
+            n, i = varint(b, i); i += n
+        elif wt == 5:
+            i += 4
+        elif wt == 1:
+            i += 8
+        else:
+            sys.exit(f"config1.db を解釈できません (wire type {wt})")
+        out.append((key >> 3, wt, b[start:i]))
+    return out
+
+
+def current(fields):
+    on = False
+    for num, wt, raw in fields:
+        if num == FIELD and wt == 0:
+            _, i = varint(raw, 0)
+            on = varint(raw, i)[0] == 1  # 同じフィールドが複数あれば最後の値が有効
+    return on
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "toggle"
+    data = open(CONFIG, "rb").read()
+    fields = parse(data)
+    now = current(fields)
+    if cmd == "status":
+        print("on" if now else "off"); return
+    want = {"on": True, "off": False, "toggle": not now}.get(cmd)
+    if want is None:
+        sys.exit("usage: gime-incognito [on|off|toggle|status]")
+
+    if want != now:
+        entry = enc(FIELD << 3) + enc(1 if want else 0)
+        body, replaced = b"", False
+        for num, wt, raw in fields:
+            if num == FIELD:
+                if not replaced:
+                    body += entry; replaced = True
+            else:
+                body += raw
+        if not replaced:
+            body += entry
+        tmp = CONFIG + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(body)
+        os.chmod(tmp, os.stat(CONFIG).st_mode & 0o777)
+        os.replace(tmp, CONFIG)
+        # 動作中の変換エンジンに確実に読み込ませるため再起動する
+        subprocess.run(["launchctl", "kickstart", "-k", JOB], check=True)
+
+    print("オン（学習しない）" if want else "オフ（通常）")
+
+
+main()
