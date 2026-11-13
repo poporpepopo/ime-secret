@@ -36,3 +36,7 @@ open ~/Applications/IMEシークレット.app
 ## ログイン時に起動する
 
 `~/Library/LaunchAgents/` に、`ProgramArguments` が `~/Applications/IMEシークレット.app/Contents/MacOS/ime-secret` の絶対パスで、`RunAtLoad` が true の plist を置く。
+
+## ライセンス
+
+MIT。[LICENSE](LICENSE) を参照。
